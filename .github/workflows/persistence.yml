@@ -1,0 +1,130 @@
+name: Persistence Compatibility
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  compatibility-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      # -------------------------------
+      # OLD VERSION: Generate wallet.db
+      # -------------------------------
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build and run OLD version (v2.3.0)
+        run: |
+          mkdir old
+          cd old
+
+          cargo init --bin
+
+          cat > Cargo.toml << 'EOF'
+          [package]
+          name = "bdk-old"
+          version = "0.1.0"
+          edition = "2021"
+
+          [dependencies]
+          bdk_wallet = { version = "2.3.0", features = ["rusqlite"] }
+          anyhow = "1"
+          EOF
+
+          cat > src/main.rs << 'EOF'
+          use bdk_wallet::{KeychainKind, Wallet};
+          use bdk_wallet::rusqlite;
+          use bdk_wallet::bitcoin;
+
+          fn main() -> anyhow::Result<()> {
+              let mut conn = rusqlite::Connection::open("wallet.db")?;
+
+              let network = bitcoin::Network::Testnet;
+
+              let descriptor = "wpkh(tprv8ZgxMBicQKsPdcAqYBpzAFwU5yxBUo88ggoBqu1qPcHUfSbKK1sKMLmC7EAk438btHQrSdu3jGGQa6PA71nvH5nkDexhLteJqkM4dQmWF9g/84'/1'/0'/0/*)";
+              let change_descriptor = "wpkh(tprv8ZgxMBicQKsPdcAqYBpzAFwU5yxBUo88ggoBqu1qPcHUfSbKK1sKMLmC7EAk438btHQrSdu3jGGQa6PA71nvH5nkDexhLteJqkM4dQmWF9g/84'/1'/0'/1/*)";
+
+              let mut wallet = Wallet::create(descriptor, change_descriptor)
+                  .network(network)
+                  .create_wallet(&mut conn)?;
+
+              // Make state non-trivial
+              for _ in 0..5 {
+                  wallet.reveal_next_address(KeychainKind::External);
+              }
+
+              wallet.persist(&mut conn)?;
+
+              Ok(())
+          }
+          EOF
+
+          cargo run
+
+          ls -lh wallet.db
+          cd ..
+
+      # -------------------------------
+      # NEW VERSION: Load wallet.db
+      # -------------------------------
+      - name: Build and run NEW version (v3.0.0)
+        run: |
+          mkdir new
+          cd new
+
+          cargo init --bin
+
+          cat > Cargo.toml << 'EOF'
+          [package]
+          name = "bdk-new"
+          version = "0.1.0"
+          edition = "2021"
+
+          [dependencies]
+          bdk_wallet = { version = "3.0.0", features = ["rusqlite"] }
+          anyhow = "1"
+          EOF
+
+          cat > src/main.rs << 'EOF'
+          use bdk_wallet::{KeychainKind, Wallet};
+          use bdk_wallet::rusqlite;
+          use bdk_wallet::bitcoin;
+
+          fn main() -> anyhow::Result<()> {
+              let mut conn = rusqlite::Connection::open("../old/wallet.db")?;
+
+              let network = bitcoin::Network::Testnet;
+
+              let descriptor = "wpkh(tprv8ZgxMBicQKsPdcAqYBpzAFwU5yxBUo88ggoBqu1qPcHUfSbKK1sKMLmC7EAk438btHQrSdu3jGGQa6PA71nvH5nkDexhLteJqkM4dQmWF9g/84'/1'/0'/0/*)";
+              let change_descriptor = "wpkh(tprv8ZgxMBicQKsPdcAqYBpzAFwU5yxBUo88ggoBqu1qPcHUfSbKK1sKMLmC7EAk438btHQrSdu3jGGQa6PA71nvH5nkDexhLteJqkM4dQmWF9g/84'/1'/0'/1/*)";
+
+              let wallet = Wallet::load()
+                  .descriptor(KeychainKind::External, Some(descriptor))
+                  .descriptor(KeychainKind::Internal, Some(change_descriptor))
+                  .check_network(network)
+                  .load_wallet(&mut conn)?;
+
+              if wallet.is_none() {
+                  panic!("❌ Compatibility test failed: wallet could not be loaded");
+              }
+
+              let wallet = wallet.unwrap();
+
+              // Validate some state
+              let addr = wallet.reveal_next_address(KeychainKind::External);
+              println!("Loaded address: {}", addr.address);
+
+              let balance = wallet.get_balance();
+              println!("Balance: {:?}", balance);
+
+              Ok(())
+          }
+          EOF
+
+          cargo run
