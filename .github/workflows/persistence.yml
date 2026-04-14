@@ -120,7 +120,7 @@ jobs:
               let addr = wallet.reveal_next_address(KeychainKind::External);
               println!("Loaded address: {}", addr.address);
 
-              let balance = wallet.get_balance();
+              let balance = wallet.balance();
               println!("Balance: {:?}", balance);
 
               Ok(())
