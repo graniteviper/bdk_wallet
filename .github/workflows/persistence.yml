@@ -114,7 +114,7 @@ jobs:
                   panic!("❌ Compatibility test failed: wallet could not be loaded");
               }
 
-              let wallet = wallet.unwrap();
+              let mut wallet = wallet.unwrap();
 
               // Validate some state
               let addr = wallet.reveal_next_address(KeychainKind::External);
